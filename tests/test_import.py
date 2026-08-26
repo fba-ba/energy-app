@@ -26,18 +26,18 @@ def _write_workbook(path) -> None:
     ws.append(HEADER)
     rows = [
         # 4 quarts d'heure de prélèvement (Totals) le 2026-07-01 00:00.
-        [1957860, "2742_510040811_1_", "1LGZ0569904403", "541449060018867111", None,
+        [1957860, "2742_510040811_1_", "1LGZ0569904403", "000000000000000001", None,
          "Minute", datetime(2026, 7, 1, 0, 0), "Kilowatt-hour", 0.351,
          "Consumption (A+) Totals", "Raw", None, "Raw", 2026, 7, 1, 0, 0, 0, 3, 27, 15],
-        [1957860, "2742_510040811_1_", "1LGZ0569904403", "541449060018867111", None,
+        [1957860, "2742_510040811_1_", "1LGZ0569904403", "000000000000000001", None,
          "Minute", datetime(2026, 7, 1, 0, 15), "Kilowatt-hour", 0.000,
          "Consumption (A+) Totals", "Raw", None, "Raw", 2026, 7, 1, 0, 15, 0, 3, 27, 15],
         # Une ligne journalière (doit être exclue du récap horaire).
-        [1957860, "2742_510040811_1_", "1LGZ0569904403", "541449060018867111", None,
+        [1957860, "2742_510040811_1_", "1LGZ0569904403", "000000000000000001", None,
          "Day", datetime(2026, 7, 1, 0, 0), "Kilowatt-hour", 1.326,
          "Consumption (+A) rate 1", "Raw", None, "Raw", 2026, 7, 1, 0, 0, 0, 3, 27, 1],
         # Une ligne avec valeur invalide -> anomalie.
-        [1957860, "2742_510040811_1_", "1LGZ0569904403", "541449060018867111", None,
+        [1957860, "2742_510040811_1_", "1LGZ0569904403", "000000000000000001", None,
          "Minute", datetime(2026, 7, 1, 0, 30), "Kilowatt-hour", "N/A",
          "Production (+A) Totals", "Raw", None, "Raw", 2026, 7, 1, 0, 30, 0, 3, 27, 15],
     ]

@@ -32,7 +32,7 @@ def test_four_quarters_aggregate_to_hour():
         readings.append(make_reading(ts=q, direction="withdrawal", value_milli=100))
     quarterly = aggregate_quarterly(readings)
     hourly = aggregate_hourly(quarterly)
-    key = ("2742_510040811_1_", "541449060018867111", datetime(2026, 7, 1, 7, 0))
+    key = ("2742_510040811_1_", "000000000000000001", datetime(2026, 7, 1, 7, 0))
     assert hourly[key]["withdrawn_kwh_milli"] == 400
     assert hourly[key]["energy_point_count"] == 4
     assert hourly[key]["energy_complete"] is True
@@ -46,7 +46,7 @@ def test_rate1_plus_rate2_without_double_count():
         make_reading(ts=ts, direction="withdrawal", value_milli=251, variable="Consumption (+A) totals rate 2"),
     ]
     quarterly = aggregate_quarterly(readings)
-    key = ("2742_510040811_1_", "541449060018867111", ts)
+    key = ("2742_510040811_1_", "000000000000000001", ts)
     # La valeur Totals prime : pas de double comptage des rates.
     assert quarterly[key]["withdrawn_milli"] == 351
 
@@ -58,7 +58,7 @@ def test_rate_fallback_when_no_totals():
         make_reading(ts=ts, direction="injection", value_milli=250, variable="Production (-A) totals rate 2"),
     ]
     quarterly = aggregate_quarterly(readings)
-    key = ("2742_510040811_1_", "541449060018867111", ts)
+    key = ("2742_510040811_1_", "000000000000000001", ts)
     assert quarterly[key]["injected_milli"] == 350
 
 
@@ -134,6 +134,6 @@ def test_true_zero_vs_missing_point():
     readings = [make_reading(ts=q, direction="withdrawal", value_milli=0) for q in _quarters(day, 3)]
     quarterly = aggregate_quarterly(readings)
     hourly = aggregate_hourly(quarterly)
-    key = ("2742_510040811_1_", "541449060018867111", datetime(2026, 7, 1, 3, 0))
+    key = ("2742_510040811_1_", "000000000000000001", datetime(2026, 7, 1, 3, 0))
     assert hourly[key]["withdrawn_kwh_milli"] == 0
     assert hourly[key]["energy_complete"] is True

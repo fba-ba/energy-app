@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from app.models import SpotPriceQuarterHourly
 from app.repositories import aggregates as aggregates_repo
 from app.schemas import HealthResponse, ImportResult, PriceSyncRequest, SyncResult
 from app.services.aggregation import build_recap_rows, price_index_by_hour
+from app.services.auth import is_ean_authorized
 from app.services.exports import (
     export_monthly_xlsx,
     export_recap_xlsx,
@@ -41,12 +42,26 @@ def get_db():
         session.close()
 
 
+def require_ean(
+    x_ean: str | None = Header(default=None, alias="X-EAN"),
+    settings: Settings = Depends(get_settings),
+) -> str:
+    """Vérifie l'en-tête `X-EAN` contre `AUTHORIZED_EAN_LIST`.
+
+    Liste vide = accès libre (comportement par défaut). Sinon, l'EAN fourni
+    doit figurer dans la liste autorisée.
+    """
+    if not is_ean_authorized(x_ean, settings):
+        raise HTTPException(status_code=401, detail="EAN non autorisé.")
+    return (x_ean or "").strip()
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(status="ok", version=__version__)
 
 
-@app.post("/imports/excel", response_model=ImportResult)
+@app.post("/imports/excel", response_model=ImportResult, dependencies=[Depends(require_ean)])
 def imports_excel(
     file: UploadFile | None = File(default=None),
     path: str | None = Form(default=None),
@@ -73,7 +88,7 @@ def imports_excel(
     return ImportResult(**result)
 
 
-@app.post("/prices/sync", response_model=SyncResult)
+@app.post("/prices/sync", response_model=SyncResult, dependencies=[Depends(require_ean)])
 def prices_sync(
     body: PriceSyncRequest,
     settings: Settings = Depends(get_settings),
@@ -126,7 +141,7 @@ def _load_recap_rows(
     return build_recap_rows(hourly, price_index, settings.allow_incomplete_price)
 
 
-@app.get("/recap/hourly")
+@app.get("/recap/hourly", dependencies=[Depends(require_ean)])
 def recap_hourly(
     site_name: str | None = None,
     ean_number: str | None = None,
@@ -136,7 +151,7 @@ def recap_hourly(
     return recap_to_public_rows(_load_recap_rows(session, settings, site_name, ean_number))
 
 
-@app.get("/totals/monthly")
+@app.get("/totals/monthly", dependencies=[Depends(require_ean)])
 def totals_monthly(
     site_name: str | None = None,
     ean_number: str | None = None,
@@ -161,12 +176,12 @@ def totals_monthly(
     return monthly_to_public_rows(records)
 
 
-@app.get("/quality/issues")
+@app.get("/quality/issues", dependencies=[Depends(require_ean)])
 def quality_issues(session: Session = Depends(get_db)) -> list[dict]:
     return get_issues(session)
 
 
-@app.get("/exports/recap.xlsx")
+@app.get("/exports/recap.xlsx", dependencies=[Depends(require_ean)])
 def export_recap_xlsx_endpoint(
     settings: Settings = Depends(get_settings),
     session: Session = Depends(get_db),
@@ -180,7 +195,7 @@ def export_recap_xlsx_endpoint(
     )
 
 
-@app.get("/exports/monthly.xlsx")
+@app.get("/exports/monthly.xlsx", dependencies=[Depends(require_ean)])
 def export_monthly_xlsx_endpoint(session: Session = Depends(get_db)) -> Response:
     records = [
         {

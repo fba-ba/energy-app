@@ -43,7 +43,7 @@ def db_session() -> Session:
 def make_reading(
     *,
     site: str = "2742_510040811_1_",
-    ean: str = "541449060018867111",
+    ean: str = "000000000000000001",
     ts: datetime,
     direction: str = "withdrawal",
     value_milli: int = 0,

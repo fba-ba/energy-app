@@ -62,6 +62,14 @@ class Settings(BaseSettings):
         default="", alias="ENERGY_ALLOWED_IMPORT_ROOTS"
     )
 
+    # --- Authentification (liste des EAN autorisés, séparés par des virgules) ---
+    authorized_ean_list_raw: str = Field(default="", alias="AUTHORIZED_EAN_LIST")
+
+    # --- SSL frontend (Streamlit, port 8501) ---
+    ssl_cert_dir: str = Field(default="./certs", alias="ENERGY_SSL_CERT_DIR")
+    ssl_cert_file: str = Field(default="", alias="ENERGY_SSL_CERT_FILE")
+    ssl_key_file: str = Field(default="", alias="ENERGY_SSL_KEY_FILE")
+
     @property
     def db_path(self) -> Path:
         """Chemin du fichier SQLite (vide pour une base en mémoire)."""
@@ -84,6 +92,21 @@ class Settings(BaseSettings):
             return []
         parts = [p.strip() for p in self.allowed_import_roots_raw.replace(";", ",").split(",")]
         return [Path(p) for p in parts if p]
+
+    @property
+    def authorized_ean_list(self) -> list[str]:
+        """Liste des EAN autorisés (vide = authentification désactivée).
+
+        Tolère les valeurs entre guillemets simples/doubles et les espaces.
+        """
+        if not self.authorized_ean_list_raw.strip():
+            return []
+        result: list[str] = []
+        for part in self.authorized_ean_list_raw.split(","):
+            cleaned = part.strip().strip('"').strip("'").strip()
+            if cleaned:
+                result.append(cleaned)
+        return result
 
 
 @lru_cache

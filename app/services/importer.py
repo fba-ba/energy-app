@@ -20,6 +20,7 @@ from app.services.aggregation import (
     price_index_by_hour,
 )
 from app.services.prices import sync_prices
+from app.services.quality import validate
 
 logger = get_logger("importer")
 
@@ -125,3 +126,41 @@ def import_excel(
     }
     logger.info("Import terminé", extra=summary)
     return summary
+
+
+def import_ores_workbook(
+    path: str | Path,
+    sheet_name: str = "Data",
+    settings: Settings | None = None,
+) -> dict:
+    """Pipeline complet de chargement d'un classeur ORES.
+
+    Enchaîne :
+      1. l'import (atomique, idempotent) ;
+      2. la synchronisation des prix Elexys si nécessaire ;
+      3. la reconstruction des agrégats horaires et mensuels ;
+      4. la validation de cohérence.
+
+    Retourne un dictionnaire avec `status` = ``"ok"`` ou ``"erreur"`` ainsi
+    que le résumé de l'import et le rapport de validation.
+    """
+    settings = settings or get_settings()
+
+    summary = import_excel(
+        path,
+        sheet_name=sheet_name,
+        sync_prices_flag=True,
+        settings=settings,
+    )
+
+    with session_scope() as session:
+        report = validate(session)
+
+    price_status = (summary.get("prices") or {}).get("status", "skipped")
+    ok = price_status != "erreur" and report["all_reconciliations_ok"]
+
+    return {
+        "status": "ok" if ok else "erreur",
+        "summary": summary,
+        "validation": report,
+    }

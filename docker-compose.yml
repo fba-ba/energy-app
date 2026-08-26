@@ -9,18 +9,31 @@ services:
     environment:
       - ENERGY_DB_URL=sqlite:////data/app.db
       - ENERGY_CACHE_DIR=/data/cache
+      - AUTHORIZED_EAN_LIST=${AUTHORIZED_EAN_LIST:-}
     restart: unless-stopped
 
   ui:
     build: .
-    command: ["streamlit", "run", "app/dashboard.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+    command:
+      - /bin/sh
+      - -c
+      - |
+        if [ -n "$$ENERGY_SSL_CERT_FILE" ] && [ -n "$$ENERGY_SSL_KEY_FILE" ] && [ -f "$$ENERGY_SSL_CERT_FILE" ] && [ -f "$$ENERGY_SSL_KEY_FILE" ]; then
+          exec streamlit run app/dashboard.py --server.port 8501 --server.address 0.0.0.0 --server.sslCertFile "$$ENERGY_SSL_CERT_FILE" --server.sslKeyFile "$$ENERGY_SSL_KEY_FILE"
+        else
+          exec streamlit run app/dashboard.py --server.port 8501 --server.address 0.0.0.0
+        fi
     ports:
       - "8501:8501"
     volumes:
       - appdata:/data
+      - ${ENERGY_SSL_CERT_DIR:-./certs}:/certs:ro
     environment:
       - ENERGY_DB_URL=sqlite:////data/app.db
       - ENERGY_CACHE_DIR=/data/cache
+      - ENERGY_SSL_CERT_FILE=/certs/fullchain.pem
+      - ENERGY_SSL_KEY_FILE=/certs/privkey.pem
+      - AUTHORIZED_EAN_LIST=${AUTHORIZED_EAN_LIST:-}
     depends_on:
       - api
     restart: unless-stopped

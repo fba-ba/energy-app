@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.db import get_session
 from app.models import SpotPriceQuarterHourly
 from app.repositories import aggregates as aggregates_repo
 from app.services.aggregation import build_recap_rows, price_index_by_hour
+from app.services.auth import is_ean_authorized
+from app.services.importer import import_ores_workbook
 
 st.set_page_config(page_title="Suivi énergétique ORES", layout="wide")
 
@@ -107,14 +112,94 @@ def load_monthly_df() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _auth_gate(settings: Settings) -> None:
+    """Bloque l'application tant que l'EAN saisi n'est pas autorisé."""
+    if not settings.authorized_ean_list:
+        return  # Authentification désactivée.
+    if st.session_state.get("authorized", False):
+        return
+
+    st.title("Accès restreint")
+    st.caption("Saisissez un numéro EAN autorisé pour accéder à l'application.")
+    with st.form("auth_form"):
+        ean = st.text_input("Numéro EAN")
+        submitted = st.form_submit_button("Se connecter")
+    if submitted:
+        if is_ean_authorized(ean, settings):
+            st.session_state["authorized"] = True
+            st.session_state["authorized_ean"] = (ean or "").strip()
+            st.rerun()
+        else:
+            st.error("EAN non autorisé.")
+    st.stop()
+
+
+def _render_import_tab(settings: Settings) -> None:
+    """Onglet de chargement d'un nouveau fichier ORES."""
+    st.subheader("Charger un nouveau fichier ORES")
+    st.caption(
+        "Le chargement déclenche l'import, la récupération des prix Elexys si nécessaire, "
+        "la mise à jour des agrégats puis la validation de cohérence."
+    )
+    uploaded = st.file_uploader("Classeur ORES (.xlsx / .xlsm)", type=["xlsx", "xlsm"])
+    sheet_name = st.text_input("Feuille à importer", value="Data")
+
+    if uploaded is not None and st.button("Charger le fichier", type="primary"):
+        suffix = Path(uploaded.name).suffix or ".xlsx"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(uploaded.getvalue())
+            target = tmp.name
+        try:
+            with st.spinner("Import en cours (fichier, prix, agrégats, validation)…"):
+                result = import_ores_workbook(target, sheet_name=sheet_name, settings=settings)
+        except Exception as exc:  # noqa: BLE001 - message utilisateur
+            st.error(f"FAILED — {exc}")
+        else:
+            if result.get("status") == "ok":
+                load_hourly_df.clear()
+                load_monthly_df.clear()
+                st.session_state["import_success"] = True
+                st.session_state["import_result"] = result
+                st.rerun()
+            else:
+                st.error("FAILED — l'opération n'a pas abouti (voir détails).")
+                with st.expander("Détails de l'opération"):
+                    st.json(result)
+        finally:
+            Path(target).unlink(missing_ok=True)
+
+
 def main() -> None:
+    settings = get_settings()
+    _auth_gate(settings)
+
     st.title("Suivi énergétique ORES / Elexys")
+
+    if st.session_state.get("import_success"):
+        st.success("SUCCESSFULL — import, prix, agrégats et validation terminés.")
+        result = st.session_state.get("import_result")
+        if result:
+            with st.expander("Détails de l'opération"):
+                st.json(result)
+        st.session_state["import_success"] = False
+        st.session_state["import_result"] = None
 
     hourly = load_hourly_df()
     monthly = load_monthly_df()
 
+    tab_recap, tab_monthly, tab_import = st.tabs(
+        ["Récap horaire", "Synthèse mensuelle", "Importer un fichier ORES"]
+    )
+
+    with tab_import:
+        _render_import_tab(settings)
+
     if hourly.empty:
-        st.info("Aucune donnée. Lancez d'abord l'import : `python -m app.cli import-excel --file <classeur.xlsx>`.")
+        with tab_recap:
+            st.info(
+                "Aucune donnée. Importez d'abord un fichier ORES via l'onglet "
+                "« Importer un fichier ORES »."
+            )
         return
 
     sites = sorted(hourly["site_name"].dropna().unique().tolist())
@@ -145,8 +230,6 @@ def main() -> None:
     if selected_ean != "Tous":
         df = df[df["ean_number"] == selected_ean]
 
-    tab_recap, tab_monthly = st.tabs(["Récap horaire", "Synthèse mensuelle"])
-
     with tab_recap:
         st.subheader("1. Courbes horaires prélèvement / injection")
         fig = go.Figure()
@@ -163,20 +246,33 @@ def main() -> None:
         fig.update_layout(height=380, xaxis_title="Heure", yaxis_title="kWh")
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("5. Prix et injection")
+        st.subheader("5. Prix de rachat et injection")
         fig = go.Figure()
+
+        buyback = df["prix_horaire_eur_kwh"]
+        neg_y = buyback.where(buyback < 0)
         fig.add_trace(
             go.Scatter(
                 x=df["date_heure"], y=df["prix_horaire_eur_kwh"],
-                name="Prix (€/kWh)", mode="lines", yaxis="y",
+                name="Prix de rachat (€/kWh)", mode="lines",
+                line=dict(color="#2ca02c"),
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=df["date_heure"], y=neg_y,
+                name="Prix de rachat < 0", mode="lines",
+                line=dict(color="red"), showlegend=False,
             )
         )
         fig.add_trace(
             go.Scatter(
                 x=df["date_heure"], y=df["injectee_kwh"],
                 name="Injection (kWh)", mode="lines", yaxis="y2",
+                line=dict(color="#ADD8E6"),
             )
         )
+        fig.add_hline(y=0, line=dict(color="black", width=2))
         fig.update_layout(
             height=380,
             yaxis=dict(title="€/kWh"),
@@ -205,7 +301,7 @@ def main() -> None:
                 "prelevee_kwh": "Prélevée (kWh)",
                 "injectee_kwh": "Injectée (kWh)",
                 "solde_prel_inj": "Solde (Prél-Inj)",
-                "prix_horaire_eur_kwh": "Prix (€/kWh)",
+                "prix_horaire_eur_kwh": "Prix de rachat (€/kWh)",
                 "injecte_eur": "Injecté (EUR)",
                 "energy_point_count": "Points énergie",
                 "price_point_count": "Points prix",
