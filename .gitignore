@@ -1,0 +1,32 @@
+# Environnement Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Base de données locale et cache
+app.db
+*.db
+*.db-journal
+cache/
+
+# Variables d'environnement (secrets)
+.env
+
+# Classeurs ORES (données personnelles / réelles : à ne pas versionner)
+*.xlsx
+*.xlsm
+
+# Outillage
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# OS
+Thumbs.db
+.DS_Store

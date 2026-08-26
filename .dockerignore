@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+app.db
+*.db
+cache/
+.env
+.git/
+.pytest_cache/
+.ruff_cache/
+tests/
+*.xlsx
+Rapport mensuel*.xlsx

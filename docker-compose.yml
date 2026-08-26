@@ -1,0 +1,29 @@
+services:
+  api:
+    build: .
+    command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - appdata:/data
+    environment:
+      - ENERGY_DB_URL=sqlite:////data/app.db
+      - ENERGY_CACHE_DIR=/data/cache
+    restart: unless-stopped
+
+  ui:
+    build: .
+    command: ["streamlit", "run", "app/dashboard.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+    ports:
+      - "8501:8501"
+    volumes:
+      - appdata:/data
+    environment:
+      - ENERGY_DB_URL=sqlite:////data/app.db
+      - ENERGY_CACHE_DIR=/data/cache
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  appdata:
