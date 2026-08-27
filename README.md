@@ -390,6 +390,48 @@ Les mêmes données sont consultables en JSON via `/recap/hourly` et
 - Le cache Streamlit (`ttl=60`) peut afficher la page vide jusqu'à ~1 minute
   après un import ; un rechargement suffit ensuite.
 
+### 10.8 Changer les ports exposés
+
+Les ports se configurent dans `docker-compose.yml`. Le `Dockerfile` ne fait que
+documenter les ports (`EXPOSE`) : cela n'a **aucun effet** sur l'écoute réelle.
+
+Pour chaque service, deux valeurs sont à distinguer :
+
+- le **port interne** du conteneur (celui sur lequel le processus écoute) ;
+- le **port hôte** (celui exposé sur le serveur), défini par `ports`.
+
+Exemple : faire écouter l'API sur `8502` (hôte **et** conteneur) :
+
+```yaml
+# docker-compose.yml
+services:
+  api:
+    command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8502"]
+    ports:
+      - "8502:8502"
+```
+
+Variante : ne changer que le port hôte (le conteneur garde `8000`) :
+
+```yaml
+    ports:
+      - "8502:8000"
+```
+
+Après modification :
+
+```bash
+docker compose up -d --force-recreate
+```
+
+L'API est alors accessible sur `http://<serveur>:8502` (documentation :
+`http://<serveur>:8502/docs`). Adaptez en conséquence les exemples `curl` des
+sections précédentes (port `8000` → `8502`).
+
+L'interface Streamlit (`ui`) n'appelle **pas** l'API : elle lit la base SQLite
+directement via le volume partagé. Changer le port de l'API n'a donc aucun
+impact sur le tableau de bord.
+
 ## 11. Règles de calcul (conformes à la feuille `Récap`)
 
 - `solde = prélevé - injecté`
