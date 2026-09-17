@@ -111,7 +111,7 @@ Quatre formules sont disponibles, sélectionnables via la CLI, l'API
 | **Engie** (défaut) | `(-17,3 + 0,3 × prix Elexys €/MWh) / 1000` | prix Elexys quart-horaire |
 | **Bolt** | `(-20 + 1 × prix Elexys €/MWh) / 1000` | prix Elexys quart-horaire |
 | **Octa+** | `(EPEX SPP × 0,852 − 13,89 €/MWh) / 1000` | indice `epex_spp`, saisi manuellement une fois par mois |
-| **TotalEnergie** | `(BELPEXM × 0,0235 − 0,625 €/MWh) / 1000` | indice `belpexm`, saisi manuellement une fois par mois ([où le récupérer](https://www.mega.be/fr/energie/indexation-de-nos-produits-variables)) |
+| **TotalEnergie** | `(BELPEXM × 0,0235 − 0,625 c€/MWh) / 100` | indice `belpexm`, saisi manuellement une fois par mois ([où le récupérer](https://www.mega.be/fr/energie/indexation-de-nos-produits-variables)) |
 
 Changer de formule déclenche un recalcul complet de `energy_hourly` et
 `monthly_totals`. L'opération est **refusée** (base non modifiée) si les

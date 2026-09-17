@@ -16,19 +16,26 @@ def transform_price_eur_kwh(
     price_eur_mwh: object,
     a: Decimal = Decimal("-17.3"),
     b: Decimal = Decimal("0.3"),
+    scale: Decimal = Decimal(1000),
 ) -> Decimal:
-    """Applique la formule du classeur : prix_kwh = (a + b × prix_mwh) / 1000."""
+    """Applique la formule du classeur : prix_kwh = (a + b × prix_mwh) / scale.
+
+    `scale` vaut 1000 par défaut (formule exprimée en €/MWh) ; certaines
+    formules (ex. TotalEnergie) expriment le résultat en c€/kWh et nécessitent
+    `scale = 100`.
+    """
     raw = to_decimal(price_eur_mwh)
-    return (a + b * raw) / Decimal(1000)
+    return (a + b * raw) / scale
 
 
 def transform_price_to_micro(
     price_eur_mwh: object,
     a: Decimal = Decimal("-17.3"),
     b: Decimal = Decimal("0.3"),
+    scale: Decimal = Decimal(1000),
 ) -> int:
     """Prix Elexys (€/MWh) -> prix transformé (€/kWh) en millionièmes d'euro."""
-    eur_kwh = transform_price_eur_kwh(price_eur_mwh, a, b)
+    eur_kwh = transform_price_eur_kwh(price_eur_mwh, a, b, scale)
     return int((eur_kwh * EUR_SCALE).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
@@ -90,6 +97,9 @@ class PricingFormulaDef:
     a: Decimal
     b: Decimal
     description: str
+    # Diviseur de la formule (a + b × indice) / scale. 1000 par défaut (€/MWh
+    # -> €/kWh) ; 100 pour les formules dont le résultat est exprimé en c€/kWh.
+    scale: Decimal = Decimal(1000)
     # Renseignés uniquement quand `requires == "monthly_index"" : indice mensuel
     # saisi manuellement (clé technique, libellé et lien de référence).
     index_key: str | None = None
@@ -132,7 +142,8 @@ PRICING_FORMULAS: dict[str, PricingFormulaDef] = {
         requires="monthly_index",
         a=Decimal("-0.625"),
         b=Decimal("0.0235"),
-        description="(BELPEXM mensuel × 0,0235 − 0,625 €/MWh) / 1000",
+        description="(BELPEXM mensuel × 0,0235 − 0,625 c€/kWh) / 100",
+        scale=Decimal(100),
         index_key="belpexm",
         index_label="BELPEXM",
         index_source_url="https://www.mega.be/fr/energie/indexation-de-nos-produits-variables",
@@ -164,10 +175,12 @@ def resolve_formula(key: str, settings: Any = None) -> PricingFormulaDef:
     return formula
 
 
-def transform_raw_mwh_micro_to_kwh_micro(raw_mwh_micro: int, a: Decimal, b: Decimal) -> int:
+def transform_raw_mwh_micro_to_kwh_micro(
+    raw_mwh_micro: int, a: Decimal, b: Decimal, scale: Decimal = Decimal(1000)
+) -> int:
     """Prix brut (millionièmes d'€/MWh) -> prix transformé (millionièmes d'€/kWh)."""
     raw_mwh = Decimal(raw_mwh_micro) / EUR_SCALE
-    return transform_price_to_micro(raw_mwh, a, b)
+    return transform_price_to_micro(raw_mwh, a, b, scale)
 
 
 def build_hourly_price_from_monthly(
@@ -181,5 +194,5 @@ def build_hourly_price_from_monthly(
     """
     if index_mwh_micro is None:
         return HourlyPrice(point_count=0, complete=False, official_micro=None, average_available_micro=None)
-    micro = transform_raw_mwh_micro_to_kwh_micro(index_mwh_micro, formula.a, formula.b)
+    micro = transform_raw_mwh_micro_to_kwh_micro(index_mwh_micro, formula.a, formula.b, formula.scale)
     return HourlyPrice(point_count=1, complete=True, official_micro=micro, average_available_micro=micro)

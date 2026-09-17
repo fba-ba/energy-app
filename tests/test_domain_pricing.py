@@ -82,11 +82,19 @@ def test_octa_plus_formula_transformation():
 
 def test_total_energie_formula_transformation():
     formula = resolve_formula("total_energie")
-    # TotalEnergie : (BELPEXM × 0,0235 − 0,625) / 1000.
-    result = transform_price_eur_kwh(Decimal("100"), a=formula.a, b=formula.b)
-    assert result == Decimal("0.001725")
+    # TotalEnergie : (BELPEXM × 0,0235 − 0,625) / 100 (résultat exprimé en c€/kWh).
+    result = transform_price_eur_kwh(Decimal("100"), a=formula.a, b=formula.b, scale=formula.scale)
+    assert result == Decimal("0.01725")
     assert formula.requires == "monthly_index"
     assert formula.index_key == "belpexm"
+
+
+def test_total_energie_reference_belpexm_juin():
+    # BELPEXM juin = 112,1 €/MWh -> valeur injectée pour 1669,25 kWh ≈ 33,54 €.
+    formula = resolve_formula("total_energie")
+    price_eur_kwh = transform_price_eur_kwh(Decimal("112.1"), a=formula.a, b=formula.b, scale=formula.scale)
+    injected_value = price_eur_kwh * Decimal("1669.25")
+    assert round(injected_value, 2) == Decimal("33.54")
 
 
 def test_resolve_formula_engie_uses_settings_override():

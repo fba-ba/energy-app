@@ -161,8 +161,8 @@ def test_switch_to_total_energie_succeeds_with_belpexm_price(db_session):
     assert result["formula"] == "total_energie"
 
     hourly = aggregates_repo.get_hourly(db_session)
-    # TotalEnergie : (100 × 0,0235 − 0,625) / 1000 = 0,001725 €/kWh, constant sur le mois.
-    assert hourly[0].spot_price_eur_kwh_micro == 1725
+    # TotalEnergie : (100 × 0,0235 − 0,625) / 100 = 0,01725 €/kWh, constant sur le mois.
+    assert hourly[0].spot_price_eur_kwh_micro == 17250
     assert hourly[0].price_complete is True
 
     # Les deux indices mensuels (EPEX SPP, BELPEXM) sont stockés indépendamment.
