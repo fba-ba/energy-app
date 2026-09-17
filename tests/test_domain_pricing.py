@@ -76,6 +76,17 @@ def test_octa_plus_formula_transformation():
     # Octa+ : (EPEX SPP × 0,852 − 13,89) / 1000.
     result = transform_price_eur_kwh(Decimal("100"), a=formula.a, b=formula.b)
     assert result == Decimal("0.07131")
+    assert formula.requires == "monthly_index"
+    assert formula.index_key == "epex_spp"
+
+
+def test_total_energie_formula_transformation():
+    formula = resolve_formula("total_energie")
+    # TotalEnergie : (BELPEXM × 0,0235 − 0,625) / 1000.
+    result = transform_price_eur_kwh(Decimal("100"), a=formula.a, b=formula.b)
+    assert result == Decimal("0.001725")
+    assert formula.requires == "monthly_index"
+    assert formula.index_key == "belpexm"
 
 
 def test_resolve_formula_engie_uses_settings_override():

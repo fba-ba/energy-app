@@ -86,15 +86,16 @@ python -m app.cli rebuild-aggregates
 # Valider la cohérence (réconciliation horaire <-> mensuel)
 python -m app.cli validate
 
-# Lister les formules de prix disponibles (Engie, Bolt, Octa+) et la formule active
+# Lister les formules de prix disponibles (Engie, Bolt, Octa+, TotalEnergie) et la formule active
 python -m app.cli list-price-formulas
 
 # Changer la formule active : recalcule toute la base (energy_hourly, monthly_totals).
-# Refusé si des données requises manquent (ex. prix EPEX SPP mensuel pour Octa+).
+# Refusé si des données requises manquent (ex. indice mensuel pour Octa+/TotalEnergie).
 python -m app.cli set-price-formula --formula bolt
 
-# Encoder le prix EPEX SPP mensuel (requis par Octa+, une fois par mois)
-python -m app.cli set-epex-price --month 2026-07 --price 85.32
+# Encoder un indice mensuel (epex_spp pour Octa+, belpexm pour TotalEnergie, une fois par mois)
+python -m app.cli set-monthly-index-price --index epex_spp --month 2026-07 --price 85.32
+python -m app.cli set-monthly-index-price --index belpexm --month 2026-07 --price 85.32
 ```
 
 L'import est **atomique** et **idempotent** : relancer la même commande ne crée
@@ -102,20 +103,21 @@ aucun doublon (contrainte unique `dedup_hash`).
 
 ### 5.0 Formules de prix d'injection
 
-Trois formules sont disponibles, sélectionnables via la CLI, l'API
+Quatre formules sont disponibles, sélectionnables via la CLI, l'API
 (`/pricing/formula`) ou l'onglet **Formule de prix** de l'interface :
 
 | Formule | Calcul | Source |
 |---|---|---|
 | **Engie** (défaut) | `(-17,3 + 0,3 × prix Elexys €/MWh) / 1000` | prix Elexys quart-horaire |
 | **Bolt** | `(-20 + 1 × prix Elexys €/MWh) / 1000` | prix Elexys quart-horaire |
-| **Octa+** | `(EPEX SPP × 0,852 − 13,89 €/MWh) / 1000` | prix EPEX SPP saisi manuellement, une fois par mois |
+| **Octa+** | `(EPEX SPP × 0,852 − 13,89 €/MWh) / 1000` | indice `epex_spp`, saisi manuellement une fois par mois |
+| **TotalEnergie** | `(BELPEXM × 0,0235 − 0,625 €/MWh) / 1000` | indice `belpexm`, saisi manuellement une fois par mois ([où le récupérer](https://www.mega.be/fr/energie/indexation-de-nos-produits-variables)) |
 
 Changer de formule déclenche un recalcul complet de `energy_hourly` et
 `monthly_totals`. L'opération est **refusée** (base non modifiée) si les
 données requises sont incomplètes : aucun prix Elexys enregistré pour
-Engie/Bolt, ou prix EPEX SPP manquant pour un des mois déjà importés pour
-Octa+.
+Engie/Bolt, ou indice mensuel (`epex_spp`/`belpexm`) manquant pour un des mois
+déjà importés pour Octa+/TotalEnergie.
 
 
 ### 5.1 Exemple complet (commandes réellement exécutées)
@@ -164,10 +166,10 @@ uvicorn app.api:app --reload
 | GET | `/quality/issues` | Anomalies de qualité |
 | GET | `/exports/recap.xlsx` | Export XLSX du récap |
 | GET | `/exports/monthly.xlsx` | Export XLSX mensuel |
-| GET | `/pricing/formulas` | Liste les formules de prix (Engie, Bolt, Octa+) et la formule active |
+| GET | `/pricing/formulas` | Liste les formules de prix (Engie, Bolt, Octa+, TotalEnergie) et la formule active |
 | POST | `/pricing/formula` | Change la formule active et recalcule toute la base (`{"formula": "bolt"}`) |
-| GET | `/pricing/epex-monthly` | Liste les prix EPEX SPP mensuels encodés (formule Octa+) |
-| POST | `/pricing/epex-monthly` | Encode le prix EPEX SPP d'un mois (`{"month": "2026-07", "price_eur_mwh": 85.32}`) |
+| GET | `/pricing/monthly-index` | Liste les indices mensuels encodés (`?index_key=epex_spp\|belpexm`) |
+| POST | `/pricing/monthly-index` | Encode un indice mensuel (`{"index_key": "belpexm", "month": "2026-07", "price_eur_mwh": 85.32}`) |
 
 **Authentification** : lorsque `AUTHORIZED_EAN_LIST` est renseignée, tous les
 endpoints ci-dessus (sauf `/health`) exigent l'en-tête `X-EAN: <numéro EAN>`.
@@ -184,9 +186,9 @@ Pages (onglets) :
 - **Récap horaire** : courbes prélèvement/injection, énergie cumulée, prix et
   injection, profil moyen par heure ;
 - **Synthèse mensuelle** : KPI, tableau, comparaison au mois précédent, complétude ;
-- **Formule de prix** : liste déroulante Engie / Bolt / Octa+, application
-  immédiate (recalcul complet de la base) et saisie du prix EPEX SPP mensuel
-  (nécessaire pour Octa+) ;
+- **Formule de prix** : liste déroulante Engie / Bolt / Octa+ / TotalEnergie,
+  application immédiate (recalcul complet de la base) et saisie des indices
+  mensuels requis (EPEX SPP pour Octa+, BELPEXM pour TotalEnergie) ;
 - **Importer un fichier ORES** : charge un nouveau classeur. Le chargement
   déclenche automatiquement l'import, la récupération des prix Elexys si
   nécessaire, la mise à jour des agrégats puis la validation de cohérence. Le
@@ -473,9 +475,9 @@ impact sur le tableau de bord.
 - `cumul net = Σ(injecté - prélevé)` (partition site/EAN)
 - `injecté (EUR) = injectée (kWh) × prix horaire (€/kWh)`
 - prix transformé (formule Engie, par défaut) : `prix_kwh = (-17.3 + 0.3 × prix_€/MWh) / 1000`
-  (voir § 5.0 pour les formules Bolt et Octa+ alternatives)
-- prix horaire = moyenne des 4 quarts d'heure (Engie/Bolt) ou prix EPEX SPP
-  mensuel constant (Octa+) ; si donnée incomplète → `NULL` (sauf tolérance)
+  (voir § 5.0 pour les formules Bolt, Octa+ et TotalEnergie alternatives)
+- prix horaire = moyenne des 4 quarts d'heure (Engie/Bolt) ou indice mensuel
+  constant (Octa+/TotalEnergie) ; si donnée incomplète → `NULL` (sauf tolérance)
 - cumuls mensuels remis à zéro au changement de mois
 - règle de précédence : registre `Totals` si présent, sinon somme `rate 1 + rate 2`
 

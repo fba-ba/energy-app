@@ -51,8 +51,8 @@ def rebuild_aggregates(session, settings: Settings) -> dict:
     """Reconstruit `energy_hourly` et `monthly_totals` à partir des données brutes et des prix.
 
     La source de prix dépend de la formule active : prix Elexys quart-horaires
-    transformés (Engie/Bolt), ou prix EPEX SPP mensuel constant sur l'heure
-    (Octa+).
+    transformés (Engie/Bolt), ou indice mensuel constant sur l'heure
+    (Octa+, TotalEnergie...).
     """
     readings = [
         _reading_to_dict(r)
@@ -60,16 +60,16 @@ def rebuild_aggregates(session, settings: Settings) -> dict:
     ]
 
     formula = resolve_formula(meta.get_active_formula_key(session), settings)
-    if formula.requires == "epex_monthly":
+    if formula.requires == "monthly_index":
         price_index: dict = {}
-        epex_monthly_index = prices_repo.get_epex_monthly_index(session)
+        monthly_index = prices_repo.get_monthly_index(session, formula.index_key)
     else:
         prices = [
             _price_to_dict(p)
             for p in session.query(SpotPriceQuarterHourly).order_by(SpotPriceQuarterHourly.timestamp_utc).all()
         ]
         price_index = price_index_by_hour(prices)
-        epex_monthly_index = {}
+        monthly_index = {}
 
     quarterly = aggregate_quarterly(readings)
     hourly = aggregate_hourly(quarterly)
@@ -78,7 +78,7 @@ def rebuild_aggregates(session, settings: Settings) -> dict:
         price_index,
         settings.allow_incomplete_price,
         formula=formula,
-        epex_monthly_index=epex_monthly_index,
+        monthly_index=monthly_index,
     )
     monthly_records = build_monthly_records(hourly_records)
 

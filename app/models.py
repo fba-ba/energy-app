@@ -102,13 +102,20 @@ class SpotPriceQuarterHourly(Base):
     retrieved_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-class EpexMonthlyPrice(Base):
-    """Prix EPEX SPP mensuel saisi manuellement (utilisé par la formule Octa+)."""
+class MonthlyIndexPrice(Base):
+    """Indice mensuel saisi manuellement (ex. EPEX SPP pour Octa+, BELPEXM pour TotalEnergie).
 
-    __tablename__ = "epex_spp_monthly"
-    __table_args__ = (UniqueConstraint("month", name="uq_epex_spp_monthly_month"),)
+    `index_key` identifie l'indice (voir `PricingFormulaDef.index_key`) ;
+    plusieurs formules peuvent nécessiter des indices différents.
+    """
+
+    __tablename__ = "monthly_index_prices"
+    __table_args__ = (
+        UniqueConstraint("index_key", "month", name="uq_monthly_index_prices_key_month"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    index_key: Mapped[str] = mapped_column(String(32))
     month: Mapped[str] = mapped_column(String(10))  # YYYY-MM-01
     price_eur_mwh_micro: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

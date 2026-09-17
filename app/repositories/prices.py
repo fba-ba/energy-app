@@ -1,5 +1,5 @@
 """Accès aux prix spot quart-horaires (`spot_prices_quarter_hourly`) et aux
-prix EPEX SPP mensuels (`epex_spp_monthly`)."""
+indices mensuels saisis manuellement (`monthly_index_prices`)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from sqlalchemy import bindparam, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
-from app.models import EpexMonthlyPrice, SpotPriceQuarterHourly
+from app.models import MonthlyIndexPrice, SpotPriceQuarterHourly
 
 
 def upsert_quarter_prices(session: Session, prices: list[dict]) -> int:
@@ -77,24 +77,26 @@ def retransform_all(session: Session, a: Decimal, b: Decimal) -> int:
     return len(updates)
 
 
-def upsert_epex_monthly_price(session: Session, month: str, price_eur_mwh_micro: int) -> None:
-    """Insère ou met à jour le prix EPEX SPP mensuel (mois au format YYYY-MM-01)."""
-    stmt = sqlite_insert(EpexMonthlyPrice.__table__).values(
-        month=month, price_eur_mwh_micro=price_eur_mwh_micro
+def upsert_monthly_index_price(session: Session, index_key: str, month: str, price_eur_mwh_micro: int) -> None:
+    """Insère ou met à jour l'indice mensuel `index_key` (mois au format YYYY-MM-01)."""
+    stmt = sqlite_insert(MonthlyIndexPrice.__table__).values(
+        index_key=index_key, month=month, price_eur_mwh_micro=price_eur_mwh_micro
     )
     stmt = stmt.on_conflict_do_update(
-        index_elements=["month"],
+        index_elements=["index_key", "month"],
         set_={"price_eur_mwh_micro": stmt.excluded.price_eur_mwh_micro},
     )
     session.connection().execute(stmt)
 
 
-def get_epex_monthly_prices(session: Session) -> list[EpexMonthlyPrice]:
-    """Retourne tous les prix EPEX SPP mensuels, triés par mois."""
-    stmt = select(EpexMonthlyPrice).order_by(EpexMonthlyPrice.month)
+def get_monthly_index_prices(session: Session, index_key: str | None = None) -> list[MonthlyIndexPrice]:
+    """Retourne les indices mensuels enregistrés, triés par mois (filtrés par `index_key` si fourni)."""
+    stmt = select(MonthlyIndexPrice).order_by(MonthlyIndexPrice.index_key, MonthlyIndexPrice.month)
+    if index_key is not None:
+        stmt = stmt.where(MonthlyIndexPrice.index_key == index_key)
     return list(session.execute(stmt).scalars().all())
 
 
-def get_epex_monthly_index(session: Session) -> dict[str, int]:
-    """Retourne `{'YYYY-MM': price_eur_mwh_micro}` pour un accès rapide par mois."""
-    return {p.month[:7]: p.price_eur_mwh_micro for p in get_epex_monthly_prices(session)}
+def get_monthly_index(session: Session, index_key: str) -> dict[str, int]:
+    """Retourne `{'YYYY-MM': price_eur_mwh_micro}` pour l'indice `index_key`."""
+    return {p.month[:7]: p.price_eur_mwh_micro for p in get_monthly_index_prices(session, index_key)}

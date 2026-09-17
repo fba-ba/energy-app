@@ -1,10 +1,10 @@
 """Sélection, validation et bascule de la formule de calcul du prix d'injection.
 
-Trois formules sont proposées (Engie, Bolt, Octa+). Changer de formule
-recalcule immédiatement tous les agrégats (`energy_hourly`, `monthly_totals`)
-mais est refusé si les données nécessaires (prix Elexys ou prix EPEX SPP
-mensuel) sont incomplètes pour la période déjà importée : la base n'est alors
-pas modifiée.
+Plusieurs formules sont proposées (Engie, Bolt, Octa+, TotalEnergie...). Changer
+de formule recalcule immédiatement tous les agrégats (`energy_hourly`,
+`monthly_totals`) mais est refusé si les données nécessaires (prix Elexys ou
+indice mensuel requis) sont incomplètes pour la période déjà importée : la
+base n'est alors pas modifiée.
 """
 
 from __future__ import annotations
@@ -35,6 +35,9 @@ def list_formulas(session, settings: Settings) -> list[dict]:
             "label": f.label,
             "description": f.description,
             "requires": f.requires,
+            "index_key": f.index_key,
+            "index_label": f.index_label,
+            "index_source_url": f.index_source_url,
             "active": f.key == active_key,
         }
         for f in PRICING_FORMULAS.values()
@@ -50,22 +53,24 @@ def validate_formula_inputs(session, formula: PricingFormulaDef) -> dict:
     """Vérifie que les données nécessaires à `formula` sont disponibles.
 
     Ne bloque jamais s'il n'y a encore aucune donnée horaire importée (rien à
-    recalculer). Sinon, exige un prix EPEX SPP mensuel pour chaque mois
-    couvert (Octa+) ou au moins un prix Elexys enregistré (Engie/Bolt).
+    recalculer). Sinon, exige un point d'indice mensuel (`formula.index_key`)
+    pour chaque mois couvert (Octa+, TotalEnergie...) ou au moins un prix
+    Elexys enregistré (Engie/Bolt).
     """
     months = aggregates_repo.get_distinct_months(session)
     if not months:
         return {"ok": True, "missing_months": [], "message": "Aucune donnée horaire à recalculer."}
 
-    if formula.requires == "epex_monthly":
-        available = set(prices_repo.get_epex_monthly_index(session).keys())
+    if formula.requires == "monthly_index":
+        available = set(prices_repo.get_monthly_index(session, formula.index_key).keys())
         missing = sorted(m for m in months if m not in available)
         if missing:
+            index_label = formula.index_label or formula.index_key
             return {
                 "ok": False,
                 "missing_months": missing,
                 "message": (
-                    "Prix EPEX SPP mensuel manquant pour : " + ", ".join(missing)
+                    f"Indice {index_label} mensuel manquant pour : " + ", ".join(missing)
                     + ". Encodez-le avant de changer de formule."
                 ),
             }
@@ -118,11 +123,11 @@ def _normalize_month(month: str) -> str:
     raise ValueError(f"Mois invalide (attendu YYYY-MM) : {month!r}")
 
 
-def set_epex_monthly_price(session, month: str, price_eur_mwh: Decimal | float | str) -> dict:
-    """Encode le prix EPEX SPP mensuel (mois au format `YYYY-MM` ou `YYYY-MM-01`)."""
+def set_monthly_index_price(session, index_key: str, month: str, price_eur_mwh: Decimal | float | str) -> dict:
+    """Encode l'indice mensuel `index_key` (mois au format `YYYY-MM` ou `YYYY-MM-01`)."""
     normalized_month = _normalize_month(month)
     micro = eur_to_micro(price_eur_mwh)
-    prices_repo.upsert_epex_monthly_price(session, normalized_month, micro)
+    prices_repo.upsert_monthly_index_price(session, index_key, normalized_month, micro)
     session.flush()
-    logger.info("Prix EPEX SPP mensuel enregistré", extra={"month": normalized_month})
-    return {"month": normalized_month, "price_eur_mwh": str(price_eur_mwh)}
+    logger.info("Indice mensuel enregistré", extra={"index_key": index_key, "month": normalized_month})
+    return {"index_key": index_key, "month": normalized_month, "price_eur_mwh": str(price_eur_mwh)}

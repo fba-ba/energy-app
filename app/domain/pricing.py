@@ -80,8 +80,8 @@ class PricingFormulaDef:
 
     `requires` indique la source de données nécessaire :
     - `"elexys_quarter_hourly"` : prix Elexys quart-horaire, transformé puis moyenné par heure ;
-    - `"epex_monthly"` : prix EPEX SPP saisi manuellement une fois par mois,
-      transformé et appliqué de façon constante à toutes les heures du mois.
+    - `"monthly_index"` : indice (`index_key`) saisi manuellement une fois par
+      mois, transformé et appliqué de façon constante à toutes les heures du mois.
     """
 
     key: str
@@ -90,6 +90,11 @@ class PricingFormulaDef:
     a: Decimal
     b: Decimal
     description: str
+    # Renseignés uniquement quand `requires == "monthly_index"" : indice mensuel
+    # saisi manuellement (clé technique, libellé et lien de référence).
+    index_key: str | None = None
+    index_label: str | None = None
+    index_source_url: str | None = None
 
 
 # Registre des formules disponibles (clé -> définition). L'ordre est celui
@@ -114,10 +119,23 @@ PRICING_FORMULAS: dict[str, PricingFormulaDef] = {
     "octa_plus": PricingFormulaDef(
         key="octa_plus",
         label="Octa+",
-        requires="epex_monthly",
+        requires="monthly_index",
         a=Decimal("-13.89"),
         b=Decimal("0.852"),
         description="(EPEX SPP mensuel × 0,852 − 13,89 €/MWh) / 1000",
+        index_key="epex_spp",
+        index_label="EPEX SPP",
+    ),
+    "total_energie": PricingFormulaDef(
+        key="total_energie",
+        label="TotalEnergie",
+        requires="monthly_index",
+        a=Decimal("-0.625"),
+        b=Decimal("0.0235"),
+        description="(BELPEXM mensuel × 0,0235 − 0,625 €/MWh) / 1000",
+        index_key="belpexm",
+        index_label="BELPEXM",
+        index_source_url="https://www.mega.be/fr/energie/indexation-de-nos-produits-variables",
     ),
 }
 
@@ -153,15 +171,15 @@ def transform_raw_mwh_micro_to_kwh_micro(raw_mwh_micro: int, a: Decimal, b: Deci
 
 
 def build_hourly_price_from_monthly(
-    epex_mwh_micro: int | None,
+    index_mwh_micro: int | None,
     formula: PricingFormulaDef,
 ) -> HourlyPrice:
-    """Prix horaire dérivé d'un prix EPEX SPP mensuel unique (formule Octa+ notamment).
+    """Prix horaire dérivé d'un indice mensuel unique (formules Octa+, TotalEnergie...).
 
-    Constant sur tout le mois. `None` si le prix EPEX SPP du mois est manquant
+    Constant sur tout le mois. `None` si l'indice mensuel requis est manquant
     (jamais remplacé par zéro).
     """
-    if epex_mwh_micro is None:
+    if index_mwh_micro is None:
         return HourlyPrice(point_count=0, complete=False, official_micro=None, average_available_micro=None)
-    micro = transform_raw_mwh_micro_to_kwh_micro(epex_mwh_micro, formula.a, formula.b)
+    micro = transform_raw_mwh_micro_to_kwh_micro(index_mwh_micro, formula.a, formula.b)
     return HourlyPrice(point_count=1, complete=True, official_micro=micro, average_available_micro=micro)

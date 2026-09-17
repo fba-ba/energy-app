@@ -45,6 +45,7 @@ class FormulaSwitchRequest(BaseModel):
     formula: str
 
 
-class EpexMonthlyPriceRequest(BaseModel):
+class MonthlyIndexPriceRequest(BaseModel):
+    index_key: str
     month: str
     price_eur_mwh: float

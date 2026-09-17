@@ -13,8 +13,9 @@ from app.domain.units import eur_to_micro
 from app.models import EnergyReadingRaw, SpotPriceQuarterHourly
 from app.repositories import aggregates as aggregates_repo
 from app.repositories import meta
+from app.repositories import prices as prices_repo
 from app.services.importer import rebuild_aggregates
-from app.services.pricing_formula import list_formulas, set_epex_monthly_price, switch_formula
+from app.services.pricing_formula import list_formulas, set_monthly_index_price, switch_formula
 
 
 def _settings() -> Settings:
@@ -60,7 +61,7 @@ def test_list_formulas_default_active_is_engie(db_session):
     settings = _settings()
     formulas = list_formulas(db_session, settings)
     keys = {f["key"] for f in formulas}
-    assert keys == {"engie", "bolt", "octa_plus"}
+    assert keys == {"engie", "bolt", "octa_plus", "total_energie"}
     active = [f for f in formulas if f["active"]]
     assert len(active) == 1
     assert active[0]["key"] == "engie"
@@ -117,7 +118,7 @@ def test_switch_to_octa_plus_succeeds_with_epex_price(db_session):
     rebuild_aggregates(db_session, settings)
     db_session.flush()
 
-    set_epex_monthly_price(db_session, "2026-07", Decimal("100"))
+    set_monthly_index_price(db_session, "epex_spp", "2026-07", Decimal("100"))
     db_session.flush()
 
     result = switch_formula(db_session, settings, "octa_plus")
@@ -129,6 +130,46 @@ def test_switch_to_octa_plus_succeeds_with_epex_price(db_session):
     assert hourly[0].price_complete is True
 
 
+def test_switch_to_total_energie_blocked_without_belpexm_price(db_session):
+    settings = _settings()
+    quarters = _quarters(datetime(2026, 7, 1), 0)
+    for i, q in enumerate(quarters):
+        _add_reading(db_session, q, "injection", 500, dedup=f"i{i}")
+    db_session.flush()
+    rebuild_aggregates(db_session, settings)
+    db_session.flush()
+
+    with pytest.raises(ValueError, match="BELPEXM"):
+        switch_formula(db_session, settings, "total_energie")
+
+    assert meta.get_active_formula_key(db_session) == "engie"
+
+
+def test_switch_to_total_energie_succeeds_with_belpexm_price(db_session):
+    settings = _settings()
+    quarters = _quarters(datetime(2026, 7, 1), 0)
+    for i, q in enumerate(quarters):
+        _add_reading(db_session, q, "injection", 500, dedup=f"i{i}")
+    db_session.flush()
+    rebuild_aggregates(db_session, settings)
+    db_session.flush()
+
+    set_monthly_index_price(db_session, "belpexm", "2026-07", Decimal("100"))
+    db_session.flush()
+
+    result = switch_formula(db_session, settings, "total_energie")
+    assert result["formula"] == "total_energie"
+
+    hourly = aggregates_repo.get_hourly(db_session)
+    # TotalEnergie : (100 × 0,0235 − 0,625) / 1000 = 0,001725 €/kWh, constant sur le mois.
+    assert hourly[0].spot_price_eur_kwh_micro == 1725
+    assert hourly[0].price_complete is True
+
+    # Les deux indices mensuels (EPEX SPP, BELPEXM) sont stockés indépendamment.
+    assert prices_repo.get_monthly_index(db_session, "belpexm") == {"2026-07": eur_to_micro(Decimal("100"))}
+    assert prices_repo.get_monthly_index(db_session, "epex_spp") == {}
+
+
 def test_unknown_formula_raises(db_session):
     settings = _settings()
     with pytest.raises(ValueError, match="inconnue"):
@@ -137,4 +178,4 @@ def test_unknown_formula_raises(db_session):
 
 def test_invalid_month_format_rejected(db_session):
     with pytest.raises(ValueError, match="invalide"):
-        set_epex_monthly_price(db_session, "2026/07", Decimal("100"))
+        set_monthly_index_price(db_session, "epex_spp", "2026/07", Decimal("100"))

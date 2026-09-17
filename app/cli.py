@@ -122,13 +122,13 @@ def cmd_set_price_formula(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_set_epex_price(args: argparse.Namespace) -> int:
+def cmd_set_monthly_index(args: argparse.Namespace) -> int:
     from app.db import session_scope
-    from app.services.pricing_formula import set_epex_monthly_price
+    from app.services.pricing_formula import set_monthly_index_price
 
     try:
         with session_scope() as session:
-            result = set_epex_monthly_price(session, args.month, args.price)
+            result = set_monthly_index_price(session, args.index, args.month, args.price)
     except ValueError as exc:
         print(f"Erreur : {exc}", file=sys.stderr)
         return 1
@@ -165,22 +165,26 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("validate", help="Valide la cohérence des données.").set_defaults(func=cmd_validate)
 
     sub.add_parser(
-        "list-price-formulas", help="Liste les formules de prix disponibles (Engie, Bolt, Octa+)."
+        "list-price-formulas", help="Liste les formules de prix disponibles (Engie, Bolt, Octa+, TotalEnergie...)."
     ).set_defaults(func=cmd_list_price_formulas)
 
     p_set_formula = sub.add_parser(
         "set-price-formula",
         help="Change la formule de prix active et recalcule toute la base.",
     )
-    p_set_formula.add_argument("--formula", required=True, help="Clé de la formule (engie, bolt, octa_plus).")
+    p_set_formula.add_argument(
+        "--formula", required=True, help="Clé de la formule (engie, bolt, octa_plus, total_energie)."
+    )
     p_set_formula.set_defaults(func=cmd_set_price_formula)
 
-    p_epex = sub.add_parser(
-        "set-epex-price", help="Encode le prix EPEX SPP mensuel (utilisé par la formule Octa+)."
+    p_index = sub.add_parser(
+        "set-monthly-index-price",
+        help="Encode un indice mensuel (epex_spp pour Octa+, belpexm pour TotalEnergie...).",
     )
-    p_epex.add_argument("--month", required=True, help="Mois au format YYYY-MM.")
-    p_epex.add_argument("--price", required=True, help="Prix EPEX SPP en €/MWh.")
-    p_epex.set_defaults(func=cmd_set_epex_price)
+    p_index.add_argument("--index", required=True, help="Clé de l'indice (epex_spp, belpexm).")
+    p_index.add_argument("--month", required=True, help="Mois au format YYYY-MM.")
+    p_index.add_argument("--price", required=True, help="Valeur de l'indice en €/MWh.")
+    p_index.set_defaults(func=cmd_set_monthly_index)
 
     return parser
 

@@ -17,10 +17,10 @@ from app.models import SpotPriceQuarterHourly
 from app.repositories import aggregates as aggregates_repo
 from app.repositories import prices as prices_repo
 from app.schemas import (
-    EpexMonthlyPriceRequest,
     FormulaSwitchRequest,
     HealthResponse,
     ImportResult,
+    MonthlyIndexPriceRequest,
     PriceSyncRequest,
     SyncResult,
 )
@@ -123,7 +123,7 @@ def pricing_formulas(
     settings: Settings = Depends(get_settings),
     session: Session = Depends(get_db),
 ) -> list[dict]:
-    """Liste les formules de prix disponibles (Engie, Bolt, Octa+) et la formule active."""
+    """Liste les formules de prix disponibles (Engie, Bolt, Octa+, TotalEnergie...) et la formule active."""
     return pricing_formula_service.list_formulas(session, settings)
 
 
@@ -135,8 +135,8 @@ def pricing_set_formula(
 ) -> dict:
     """Change la formule de prix active et reconstruit tous les agrégats.
 
-    Refusé (400) si des données requises (prix EPEX SPP mensuel, prix Elexys)
-    sont manquantes : la base n'est alors pas modifiée.
+    Refusé (400) si des données requises (indice mensuel, prix Elexys) sont
+    manquantes : la base n'est alors pas modifiée.
     """
     try:
         result = pricing_formula_service.switch_formula(session, settings, body.formula)
@@ -146,23 +146,29 @@ def pricing_set_formula(
     return result
 
 
-@app.get("/pricing/epex-monthly", dependencies=[Depends(require_ean)])
-def pricing_epex_monthly(session: Session = Depends(get_db)) -> list[dict]:
-    """Liste les prix EPEX SPP mensuels encodés (utilisés par la formule Octa+)."""
+@app.get("/pricing/monthly-index", dependencies=[Depends(require_ean)])
+def pricing_monthly_index(index_key: str | None = None, session: Session = Depends(get_db)) -> list[dict]:
+    """Liste les indices mensuels encodés (EPEX SPP pour Octa+, BELPEXM pour TotalEnergie...)."""
     return [
-        {"month": p.month, "price_eur_mwh": str(micro_to_eur(p.price_eur_mwh_micro))}
-        for p in prices_repo.get_epex_monthly_prices(session)
+        {
+            "index_key": p.index_key,
+            "month": p.month,
+            "price_eur_mwh": str(micro_to_eur(p.price_eur_mwh_micro)),
+        }
+        for p in prices_repo.get_monthly_index_prices(session, index_key)
     ]
 
 
-@app.post("/pricing/epex-monthly", dependencies=[Depends(require_ean)])
-def pricing_set_epex_monthly(
-    body: EpexMonthlyPriceRequest,
+@app.post("/pricing/monthly-index", dependencies=[Depends(require_ean)])
+def pricing_set_monthly_index(
+    body: MonthlyIndexPriceRequest,
     session: Session = Depends(get_db),
 ) -> dict:
-    """Encode (ou met à jour) le prix EPEX SPP d'un mois donné."""
+    """Encode (ou met à jour) l'indice mensuel `index_key` d'un mois donné."""
     try:
-        result = pricing_formula_service.set_epex_monthly_price(session, body.month, body.price_eur_mwh)
+        result = pricing_formula_service.set_monthly_index_price(
+            session, body.index_key, body.month, body.price_eur_mwh
+        )
         session.commit()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -190,9 +196,9 @@ def _load_recap_rows(
         for h in hourly_orm
     }
     formula = pricing_formula_service.get_active_formula(session, settings)
-    if formula.requires == "epex_monthly":
+    if formula.requires == "monthly_index":
         price_index: dict = {}
-        epex_monthly_index = prices_repo.get_epex_monthly_index(session)
+        monthly_index = prices_repo.get_monthly_index(session, formula.index_key)
     else:
         prices_orm = session.query(SpotPriceQuarterHourly).order_by(SpotPriceQuarterHourly.timestamp_utc).all()
         price_index = price_index_by_hour(
@@ -204,13 +210,13 @@ def _load_recap_rows(
                 for p in prices_orm
             ]
         )
-        epex_monthly_index = {}
+        monthly_index = {}
     return build_recap_rows(
         hourly,
         price_index,
         settings.allow_incomplete_price,
         formula=formula,
-        epex_monthly_index=epex_monthly_index,
+        monthly_index=monthly_index,
     )
 
 

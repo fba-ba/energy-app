@@ -144,16 +144,16 @@ def build_recap_rows(
     price_index: dict[datetime, list[int]],
     allow_incomplete_price: bool = False,
     formula: PricingFormulaDef | None = None,
-    epex_monthly_index: dict[str, int] | None = None,
+    monthly_index: dict[str, int] | None = None,
 ) -> list[dict]:
     """Construit les 21 colonnes de la vue `recap_hourly` (triées, cumuls calculés).
 
     Par défaut (`formula` omis), le prix horaire provient de `price_index`
     (prix Elexys quart-horaires transformés, moyenne des 4 quarts). Si
-    `formula.requires == "epex_monthly"`, le prix horaire est constant sur le
-    mois et dérivé de `epex_monthly_index` (prix EPEX SPP saisi manuellement).
+    `formula.requires == "monthly_index"`, le prix horaire est constant sur le
+    mois et dérivé de `monthly_index` (indice saisi manuellement, ex. EPEX SPP, BELPEXM).
     """
-    epex_monthly_index = epex_monthly_index or {}
+    monthly_index = monthly_index or {}
     sorted_keys = sorted(hourly.keys(), key=lambda k: (k[0] or "", k[1] or "", k[2]))
 
     global_cumul: dict[tuple, dict] = defaultdict(
@@ -171,8 +171,8 @@ def build_recap_rows(
         month_key = ts.strftime("%Y-%m")
 
         hourly_price = (
-            build_hourly_price_from_monthly(epex_monthly_index.get(month_key), formula)
-            if formula is not None and formula.requires == "epex_monthly"
+            build_hourly_price_from_monthly(monthly_index.get(month_key), formula)
+            if formula is not None and formula.requires == "monthly_index"
             else build_hourly_price(price_index.get(ts, []), allow_incomplete_price)
         )
         official_micro = hourly_price.official_micro
@@ -245,21 +245,21 @@ def build_hourly_records(
     price_index: dict[datetime, list[int]],
     allow_incomplete_price: bool = False,
     formula: PricingFormulaDef | None = None,
-    epex_monthly_index: dict[str, int] | None = None,
+    monthly_index: dict[str, int] | None = None,
 ) -> list[dict]:
     """Construit les enregistrements à persister dans `energy_hourly`.
 
     Voir `build_recap_rows` pour la logique de sélection de la source de prix.
     """
-    epex_monthly_index = epex_monthly_index or {}
+    monthly_index = monthly_index or {}
     records = []
     for _, h in sorted(
         hourly.items(), key=lambda item: (item[0][0] or "", item[0][1] or "", item[0][2])
     ):
         ts = h["timestamp_local"]
         hourly_price = (
-            build_hourly_price_from_monthly(epex_monthly_index.get(ts.strftime("%Y-%m")), formula)
-            if formula is not None and formula.requires == "epex_monthly"
+            build_hourly_price_from_monthly(monthly_index.get(ts.strftime("%Y-%m")), formula)
+            if formula is not None and formula.requires == "monthly_index"
             else build_hourly_price(price_index.get(ts, []), allow_incomplete_price)
         )
         official_micro = hourly_price.official_micro
