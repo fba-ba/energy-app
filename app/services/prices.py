@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from app.config import Settings
-from app.domain.pricing import transform_price_to_micro
+from app.domain.pricing import resolve_formula, transform_price_to_micro
 from app.domain.units import eur_to_micro
 from app.ingestion.elexys import ElexysClient, PricePoint
 from app.logging_conf import get_logger
@@ -17,17 +17,13 @@ from app.repositories import readings as readings_repo
 logger = get_logger("prices")
 
 
-def _transform_point(point: PricePoint, settings: Settings) -> dict:
+def _transform_point(point: PricePoint, a: Decimal, b: Decimal) -> dict:
     """Convertit un point Elexys brut en enregistrement persistant (micro-unités)."""
     return {
         "timestamp_local": point.timestamp_local,
         "timestamp_utc": point.timestamp_utc,
         "price_eur_mwh_raw_micro": eur_to_micro(point.price_eur_mwh),
-        "price_eur_kwh_transformed_micro": transform_price_to_micro(
-            point.price_eur_mwh,
-            a=Decimal(settings.price_transform_a),
-            b=Decimal(settings.price_transform_b),
-        ),
+        "price_eur_kwh_transformed_micro": transform_price_to_micro(point.price_eur_mwh, a=a, b=b),
         "source_key": "elexys",
         "source_url": "",
         "retrieved_at": datetime.now(UTC).replace(tzinfo=None),
@@ -80,7 +76,17 @@ def sync_prices(
             "source_url": outcome.source_url,
         }
 
-    records = [_transform_point(p, settings) for p in outcome.points]
+    # `price_eur_kwh_transformed_micro` est une valeur informative calculée à
+    # partir d'une formule « Elexys quart-horaire » : si la formule active
+    # nécessite un prix EPEX SPP mensuel (ex. Octa+), on retombe sur Engie.
+    active_formula = resolve_formula(meta.get_active_formula_key(session), settings)
+    formula = (
+        active_formula
+        if active_formula.requires == "elexys_quarter_hourly"
+        else resolve_formula("engie", settings)
+    )
+
+    records = [_transform_point(p, formula.a, formula.b) for p in outcome.points]
     for rec in records:
         rec["source_url"] = outcome.source_url
     prices_repo.upsert_quarter_prices(session, records)
@@ -89,9 +95,9 @@ def sync_prices(
         session,
         "price_transform",
         {
-            "formula": f"({settings.price_transform_a} + {settings.price_transform_b} × prix_mwh) / 1000",
-            "a": settings.price_transform_a,
-            "b": settings.price_transform_b,
+            "formula": f"({formula.a} + {formula.b} × prix_mwh) / 1000",
+            "a": str(formula.a),
+            "b": str(formula.b),
             "source": "elexys",
             "last_url": outcome.source_url,
             "last_retrieved_at": outcome.retrieved_at.isoformat(),

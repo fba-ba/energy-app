@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Any
 
 from app.domain.units import EUR_SCALE, to_decimal
 
@@ -71,3 +72,96 @@ def build_hourly_price(
         official_micro=official,
         average_available_micro=average,
     )
+
+
+@dataclass(frozen=True)
+class PricingFormulaDef:
+    """Définition d'une formule de calcul du prix d'injection.
+
+    `requires` indique la source de données nécessaire :
+    - `"elexys_quarter_hourly"` : prix Elexys quart-horaire, transformé puis moyenné par heure ;
+    - `"epex_monthly"` : prix EPEX SPP saisi manuellement une fois par mois,
+      transformé et appliqué de façon constante à toutes les heures du mois.
+    """
+
+    key: str
+    label: str
+    requires: str
+    a: Decimal
+    b: Decimal
+    description: str
+
+
+# Registre des formules disponibles (clé -> définition). L'ordre est celui
+# proposé dans les listes déroulantes de l'interface et de l'API.
+PRICING_FORMULAS: dict[str, PricingFormulaDef] = {
+    "engie": PricingFormulaDef(
+        key="engie",
+        label="Engie",
+        requires="elexys_quarter_hourly",
+        a=Decimal("-17.3"),
+        b=Decimal("0.3"),
+        description="(-17,3 + 0,3 × prix Elexys €/MWh) / 1000",
+    ),
+    "bolt": PricingFormulaDef(
+        key="bolt",
+        label="Bolt",
+        requires="elexys_quarter_hourly",
+        a=Decimal("-20"),
+        b=Decimal("1"),
+        description="(-20 + 1 × prix Elexys €/MWh) / 1000",
+    ),
+    "octa_plus": PricingFormulaDef(
+        key="octa_plus",
+        label="Octa+",
+        requires="epex_monthly",
+        a=Decimal("-13.89"),
+        b=Decimal("0.852"),
+        description="(EPEX SPP mensuel × 0,852 − 13,89 €/MWh) / 1000",
+    ),
+}
+
+DEFAULT_FORMULA_KEY = "engie"
+
+
+def resolve_formula(key: str, settings: Any = None) -> PricingFormulaDef:
+    """Retourne la définition de la formule `key`.
+
+    Pour « Engie », les paramètres `a`/`b` peuvent être surchargés par la
+    configuration (`PRICE_TRANSFORM_A` / `PRICE_TRANSFORM_B`), ce qui conserve
+    la rétrocompatibilité avec le comportement historique de l'application.
+    """
+    if key not in PRICING_FORMULAS:
+        raise ValueError(f"Formule de prix inconnue : {key!r}")
+    formula = PRICING_FORMULAS[key]
+    if key == "engie" and settings is not None:
+        formula = PricingFormulaDef(
+            key=formula.key,
+            label=formula.label,
+            requires=formula.requires,
+            a=Decimal(settings.price_transform_a),
+            b=Decimal(settings.price_transform_b),
+            description=formula.description,
+        )
+    return formula
+
+
+def transform_raw_mwh_micro_to_kwh_micro(raw_mwh_micro: int, a: Decimal, b: Decimal) -> int:
+    """Prix brut (millionièmes d'€/MWh) -> prix transformé (millionièmes d'€/kWh)."""
+    raw_mwh = Decimal(raw_mwh_micro) / EUR_SCALE
+    return transform_price_to_micro(raw_mwh, a, b)
+
+
+def build_hourly_price_from_monthly(
+    epex_mwh_micro: int | None,
+    formula: PricingFormulaDef,
+) -> HourlyPrice:
+    """Prix horaire dérivé d'un prix EPEX SPP mensuel unique (formule Octa+ notamment).
+
+    Constant sur tout le mois. `None` si le prix EPEX SPP du mois est manquant
+    (jamais remplacé par zéro).
+    """
+    if epex_mwh_micro is None:
+        return HourlyPrice(point_count=0, complete=False, official_micro=None, average_available_micro=None)
+    micro = transform_raw_mwh_micro_to_kwh_micro(epex_mwh_micro, formula.a, formula.b)
+    return HourlyPrice(point_count=1, complete=True, official_micro=micro, average_available_micro=micro)

@@ -73,3 +73,20 @@ def get_metadata(session: Session, key: str) -> object | None:
         return json.loads(row.value)
     except json.JSONDecodeError:
         return row.value
+
+
+# Clé technique de la formule de prix d'injection actuellement active.
+ACTIVE_PRICING_FORMULA_KEY = "active_pricing_formula"
+
+
+def get_active_formula_key(session: Session, default: str = "engie") -> str:
+    """Retourne la clé de la formule de prix active (`"engie"` par défaut)."""
+    value = get_metadata(session, ACTIVE_PRICING_FORMULA_KEY)
+    if isinstance(value, str) and value:
+        return value
+    return default
+
+
+def set_active_formula_key(session: Session, key: str) -> None:
+    """Enregistre la clé de la formule de prix active."""
+    set_metadata(session, ACTIVE_PRICING_FORMULA_KEY, key)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
@@ -11,11 +12,15 @@ import streamlit as st
 
 from app.config import Settings, get_settings
 from app.db import get_session
+from app.domain.pricing import DEFAULT_FORMULA_KEY
+from app.domain.units import micro_to_eur
 from app.models import SpotPriceQuarterHourly
 from app.repositories import aggregates as aggregates_repo
+from app.repositories import prices as prices_repo
 from app.services.aggregation import build_recap_rows, price_index_by_hour
 from app.services.auth import is_ean_authorized
 from app.services.importer import import_ores_workbook
+from app.services.pricing_formula import get_active_formula, list_formulas, set_epex_monthly_price, switch_formula
 
 st.set_page_config(page_title="Suivi énergétique ORES", layout="wide")
 
@@ -45,16 +50,28 @@ def load_hourly_df() -> pd.DataFrame:
             .order_by(SpotPriceQuarterHourly.timestamp_utc)
             .all()
         )
-        price_index = price_index_by_hour(
-            [
-                {
-                    "timestamp_local": p.timestamp_local,
-                    "price_eur_kwh_transformed_micro": p.price_eur_kwh_transformed_micro,
-                }
-                for p in prices
-            ]
+        formula = get_active_formula(session, settings)
+        if formula.requires == "epex_monthly":
+            price_index: dict = {}
+            epex_monthly_index = prices_repo.get_epex_monthly_index(session)
+        else:
+            price_index = price_index_by_hour(
+                [
+                    {
+                        "timestamp_local": p.timestamp_local,
+                        "price_eur_kwh_transformed_micro": p.price_eur_kwh_transformed_micro,
+                    }
+                    for p in prices
+                ]
+            )
+            epex_monthly_index = {}
+        rows = build_recap_rows(
+            hourly,
+            price_index,
+            settings.allow_incomplete_price,
+            formula=formula,
+            epex_monthly_index=epex_monthly_index,
         )
-        rows = build_recap_rows(hourly, price_index, settings.allow_incomplete_price)
     finally:
         session.close()
 
@@ -169,6 +186,84 @@ def _render_import_tab(settings: Settings) -> None:
             Path(target).unlink(missing_ok=True)
 
 
+def _render_pricing_tab(settings: Settings) -> None:
+    """Onglet de sélection de la formule de prix d'injection et de saisie EPEX SPP."""
+    st.subheader("Formule de calcul du prix d'injection")
+    st.caption(
+        "Changer de formule recalcule immédiatement toute la base (`energy_hourly`, "
+        "`monthly_totals`). L'opération est refusée si des données requises manquent "
+        "(ex. prix EPEX SPP mensuel pour Octa+)."
+    )
+
+    session = get_session()
+    try:
+        formulas = list_formulas(session, settings)
+    finally:
+        session.close()
+
+    keys = [f["key"] for f in formulas]
+    labels = {f["key"]: f"{f['label']} — {f['description']}" for f in formulas}
+    active_key = next((f["key"] for f in formulas if f["active"]), DEFAULT_FORMULA_KEY)
+
+    selected = st.selectbox(
+        "Formule active",
+        keys,
+        index=keys.index(active_key) if active_key in keys else 0,
+        format_func=lambda k: labels.get(k, k),
+    )
+
+    if selected != active_key and st.button("Appliquer cette formule (met à jour toute la base)", type="primary"):
+        session = get_session()
+        try:
+            result = switch_formula(session, settings, selected)
+            session.commit()
+        except ValueError as exc:
+            session.rollback()
+            st.error(f"FAILED — {exc}")
+        else:
+            st.success(
+                f"SUCCESSFULL — formule « {selected} » appliquée "
+                f"({result['rebuild']['hours']} heures recalculées)."
+            )
+            load_hourly_df.clear()
+            load_monthly_df.clear()
+            st.rerun()
+        finally:
+            session.close()
+
+    st.markdown("---")
+    st.subheader("Prix EPEX SPP mensuel (utilisé par la formule Octa+)")
+    st.caption("EPEX SPP est un prix mensuel : encodez-le une fois par mois.")
+
+    session = get_session()
+    try:
+        epex_rows = [
+            {"Mois": p.month[:7], "EPEX SPP (€/MWh)": str(micro_to_eur(p.price_eur_mwh_micro))}
+            for p in prices_repo.get_epex_monthly_prices(session)
+        ]
+    finally:
+        session.close()
+    st.dataframe(pd.DataFrame(epex_rows), use_container_width=True)
+
+    with st.form("epex_form"):
+        month = st.text_input("Mois (YYYY-MM)", value="")
+        price = st.number_input("Prix EPEX SPP (€/MWh)", value=0.0, step=0.01, format="%.2f")
+        submitted = st.form_submit_button("Enregistrer")
+    if submitted:
+        session = get_session()
+        try:
+            set_epex_monthly_price(session, month, Decimal(str(price)))
+            session.commit()
+        except ValueError as exc:
+            session.rollback()
+            st.error(f"FAILED — {exc}")
+        else:
+            st.success("SUCCESSFULL — prix EPEX SPP enregistré.")
+            st.rerun()
+        finally:
+            session.close()
+
+
 def main() -> None:
     settings = get_settings()
     _auth_gate(settings)
@@ -187,9 +282,12 @@ def main() -> None:
     hourly = load_hourly_df()
     monthly = load_monthly_df()
 
-    tab_recap, tab_monthly, tab_import = st.tabs(
-        ["Récap horaire", "Synthèse mensuelle", "Importer un fichier ORES"]
+    tab_recap, tab_monthly, tab_pricing, tab_import = st.tabs(
+        ["Récap horaire", "Synthèse mensuelle", "Formule de prix", "Importer un fichier ORES"]
     )
+
+    with tab_pricing:
+        _render_pricing_tab(settings)
 
     with tab_import:
         _render_import_tab(settings)

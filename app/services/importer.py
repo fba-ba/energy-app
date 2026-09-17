@@ -6,11 +6,13 @@ from pathlib import Path
 
 from app.config import Settings, get_settings
 from app.db import session_scope
+from app.domain.pricing import resolve_formula
 from app.ingestion.excel import parse_workbook, validate_import_path
 from app.logging_conf import get_logger
 from app.models import EnergyReadingRaw, SpotPriceQuarterHourly
 from app.repositories import aggregates as aggregates_repo
 from app.repositories import meta
+from app.repositories import prices as prices_repo
 from app.repositories import readings as readings_repo
 from app.services.aggregation import (
     aggregate_hourly,
@@ -46,20 +48,38 @@ def _price_to_dict(p: SpotPriceQuarterHourly) -> dict:
 
 
 def rebuild_aggregates(session, settings: Settings) -> dict:
-    """Reconstruit `energy_hourly` et `monthly_totals` à partir des données brutes et des prix."""
+    """Reconstruit `energy_hourly` et `monthly_totals` à partir des données brutes et des prix.
+
+    La source de prix dépend de la formule active : prix Elexys quart-horaires
+    transformés (Engie/Bolt), ou prix EPEX SPP mensuel constant sur l'heure
+    (Octa+).
+    """
     readings = [
         _reading_to_dict(r)
         for r in session.query(EnergyReadingRaw).order_by(EnergyReadingRaw.id).all()
     ]
-    prices = [
-        _price_to_dict(p)
-        for p in session.query(SpotPriceQuarterHourly).order_by(SpotPriceQuarterHourly.timestamp_utc).all()
-    ]
+
+    formula = resolve_formula(meta.get_active_formula_key(session), settings)
+    if formula.requires == "epex_monthly":
+        price_index: dict = {}
+        epex_monthly_index = prices_repo.get_epex_monthly_index(session)
+    else:
+        prices = [
+            _price_to_dict(p)
+            for p in session.query(SpotPriceQuarterHourly).order_by(SpotPriceQuarterHourly.timestamp_utc).all()
+        ]
+        price_index = price_index_by_hour(prices)
+        epex_monthly_index = {}
 
     quarterly = aggregate_quarterly(readings)
     hourly = aggregate_hourly(quarterly)
-    price_index = price_index_by_hour(prices)
-    hourly_records = build_hourly_records(hourly, price_index, settings.allow_incomplete_price)
+    hourly_records = build_hourly_records(
+        hourly,
+        price_index,
+        settings.allow_incomplete_price,
+        formula=formula,
+        epex_monthly_index=epex_monthly_index,
+    )
     monthly_records = build_monthly_records(hourly_records)
 
     aggregates_repo.replace_hourly(session, hourly_records)

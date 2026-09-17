@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.models import EnergyHourly, MonthlyTotal
@@ -69,3 +69,14 @@ def get_distinct_sites(session: Session) -> list[tuple[str, str]]:
         .order_by(EnergyHourly.site_name)
     )
     return [(s, e) for s, e in session.execute(stmt).all()]
+
+
+def get_distinct_months(session: Session) -> list[str]:
+    """Retourne les mois distincts (`YYYY-MM`) couverts par `energy_hourly`.
+
+    Utilisé pour vérifier, avant un changement de formule de prix, que toutes
+    les données requises (ex. prix EPEX SPP mensuel) sont disponibles.
+    """
+    month_expr = func.strftime("%Y-%m", EnergyHourly.timestamp_local)
+    stmt = select(month_expr).distinct().order_by(month_expr)
+    return [m for (m,) in session.execute(stmt).all() if m]

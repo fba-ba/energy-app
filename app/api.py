@@ -12,9 +12,19 @@ from sqlalchemy.orm import Session
 from app import __version__
 from app.config import Settings, get_settings
 from app.db import get_session
+from app.domain.units import micro_to_eur
 from app.models import SpotPriceQuarterHourly
 from app.repositories import aggregates as aggregates_repo
-from app.schemas import HealthResponse, ImportResult, PriceSyncRequest, SyncResult
+from app.repositories import prices as prices_repo
+from app.schemas import (
+    EpexMonthlyPriceRequest,
+    FormulaSwitchRequest,
+    HealthResponse,
+    ImportResult,
+    PriceSyncRequest,
+    SyncResult,
+)
+from app.services import pricing_formula as pricing_formula_service
 from app.services.aggregation import build_recap_rows, price_index_by_hour
 from app.services.auth import is_ean_authorized
 from app.services.exports import (
@@ -108,6 +118,57 @@ def prices_sync(
     return SyncResult(**result)
 
 
+@app.get("/pricing/formulas", dependencies=[Depends(require_ean)])
+def pricing_formulas(
+    settings: Settings = Depends(get_settings),
+    session: Session = Depends(get_db),
+) -> list[dict]:
+    """Liste les formules de prix disponibles (Engie, Bolt, Octa+) et la formule active."""
+    return pricing_formula_service.list_formulas(session, settings)
+
+
+@app.post("/pricing/formula", dependencies=[Depends(require_ean)])
+def pricing_set_formula(
+    body: FormulaSwitchRequest,
+    settings: Settings = Depends(get_settings),
+    session: Session = Depends(get_db),
+) -> dict:
+    """Change la formule de prix active et reconstruit tous les agrégats.
+
+    Refusé (400) si des données requises (prix EPEX SPP mensuel, prix Elexys)
+    sont manquantes : la base n'est alors pas modifiée.
+    """
+    try:
+        result = pricing_formula_service.switch_formula(session, settings, body.formula)
+        session.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result
+
+
+@app.get("/pricing/epex-monthly", dependencies=[Depends(require_ean)])
+def pricing_epex_monthly(session: Session = Depends(get_db)) -> list[dict]:
+    """Liste les prix EPEX SPP mensuels encodés (utilisés par la formule Octa+)."""
+    return [
+        {"month": p.month, "price_eur_mwh": str(micro_to_eur(p.price_eur_mwh_micro))}
+        for p in prices_repo.get_epex_monthly_prices(session)
+    ]
+
+
+@app.post("/pricing/epex-monthly", dependencies=[Depends(require_ean)])
+def pricing_set_epex_monthly(
+    body: EpexMonthlyPriceRequest,
+    session: Session = Depends(get_db),
+) -> dict:
+    """Encode (ou met à jour) le prix EPEX SPP d'un mois donné."""
+    try:
+        result = pricing_formula_service.set_epex_monthly_price(session, body.month, body.price_eur_mwh)
+        session.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result
+
+
 def _load_recap_rows(
     session: Session,
     settings: Settings,
@@ -128,17 +189,29 @@ def _load_recap_rows(
         }
         for h in hourly_orm
     }
-    prices_orm = session.query(SpotPriceQuarterHourly).order_by(SpotPriceQuarterHourly.timestamp_utc).all()
-    price_index = price_index_by_hour(
-        [
-            {
-                "timestamp_local": p.timestamp_local,
-                "price_eur_kwh_transformed_micro": p.price_eur_kwh_transformed_micro,
-            }
-            for p in prices_orm
-        ]
+    formula = pricing_formula_service.get_active_formula(session, settings)
+    if formula.requires == "epex_monthly":
+        price_index: dict = {}
+        epex_monthly_index = prices_repo.get_epex_monthly_index(session)
+    else:
+        prices_orm = session.query(SpotPriceQuarterHourly).order_by(SpotPriceQuarterHourly.timestamp_utc).all()
+        price_index = price_index_by_hour(
+            [
+                {
+                    "timestamp_local": p.timestamp_local,
+                    "price_eur_kwh_transformed_micro": p.price_eur_kwh_transformed_micro,
+                }
+                for p in prices_orm
+            ]
+        )
+        epex_monthly_index = {}
+    return build_recap_rows(
+        hourly,
+        price_index,
+        settings.allow_incomplete_price,
+        formula=formula,
+        epex_monthly_index=epex_monthly_index,
     )
-    return build_recap_rows(hourly, price_index, settings.allow_incomplete_price)
 
 
 @app.get("/recap/hourly", dependencies=[Depends(require_ean)])

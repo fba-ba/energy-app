@@ -96,6 +96,46 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0 if report["all_reconciliations_ok"] else 1
 
 
+def cmd_list_price_formulas(args: argparse.Namespace) -> int:
+    from app.db import session_scope
+    from app.services.pricing_formula import list_formulas
+
+    settings = get_settings()
+    with session_scope() as session:
+        formulas = list_formulas(session, settings)
+    print(json.dumps(formulas, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
+def cmd_set_price_formula(args: argparse.Namespace) -> int:
+    from app.db import session_scope
+    from app.services.pricing_formula import switch_formula
+
+    settings = get_settings()
+    try:
+        with session_scope() as session:
+            result = switch_formula(session, settings, args.formula)
+    except ValueError as exc:
+        print(f"Erreur : {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
+def cmd_set_epex_price(args: argparse.Namespace) -> int:
+    from app.db import session_scope
+    from app.services.pricing_formula import set_epex_monthly_price
+
+    try:
+        with session_scope() as session:
+            result = set_epex_monthly_price(session, args.month, args.price)
+    except ValueError as exc:
+        print(f"Erreur : {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="energy-app",
@@ -123,6 +163,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser("validate", help="Valide la cohérence des données.").set_defaults(func=cmd_validate)
+
+    sub.add_parser(
+        "list-price-formulas", help="Liste les formules de prix disponibles (Engie, Bolt, Octa+)."
+    ).set_defaults(func=cmd_list_price_formulas)
+
+    p_set_formula = sub.add_parser(
+        "set-price-formula",
+        help="Change la formule de prix active et recalcule toute la base.",
+    )
+    p_set_formula.add_argument("--formula", required=True, help="Clé de la formule (engie, bolt, octa_plus).")
+    p_set_formula.set_defaults(func=cmd_set_price_formula)
+
+    p_epex = sub.add_parser(
+        "set-epex-price", help="Encode le prix EPEX SPP mensuel (utilisé par la formule Octa+)."
+    )
+    p_epex.add_argument("--month", required=True, help="Mois au format YYYY-MM.")
+    p_epex.add_argument("--price", required=True, help="Prix EPEX SPP en €/MWh.")
+    p_epex.set_defaults(func=cmd_set_epex_price)
 
     return parser
 

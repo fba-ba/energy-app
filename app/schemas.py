@@ -39,3 +39,12 @@ class SyncResult(BaseModel):
     count: int
     source_url: str
     error: str | None = None
+
+
+class FormulaSwitchRequest(BaseModel):
+    formula: str
+
+
+class EpexMonthlyPriceRequest(BaseModel):
+    month: str
+    price_eur_mwh: float
